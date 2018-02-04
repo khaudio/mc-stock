@@ -10,7 +10,9 @@ except:
     import pickle
 import os
 
-cookies = dict(storeSelected='YOURSTORENUMBER')
+
+storeNumber = '131'
+cookies = {'storeSelected': storeNumber}
 global inStockItems
 itemURLs = []
 global msgText
