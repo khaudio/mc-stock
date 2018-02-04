@@ -1,7 +1,9 @@
 #/usr/bin/env python
 
 """
-mc-stock checks stock on specified items at Microcenter store locations, and sends email notifications when changes are detected.  Applicably, it helps the user obtain rare items during shortages, like graphics cards.
+mc-stock checks stock on specified items at Microcenter store locations, and
+sends email notifications when changes are detected.  Applicably, it helps
+the user obtain rare items during shortages, like graphics cards.
 """
 
 
@@ -19,10 +21,22 @@ class MCStock(object):
 
 
 class Store(MCStock):
-    def __init__(self, storeNum):
+    def __init__(self, storeNum, server=None, port=None, sender=None, password=None, recipient=None, debug=False):
         super().__init__(storeNum)
         self.items = set()
         self.newInStock, self.totalInStock = 0, 0
+        self.debug = False if debug is None else debug # Setting debug to True enables false positives for testing
+        self.server = 'smtp.gmail.com' if server is None else server
+        self.port = 587 if port is None else port
+        self.sender = input('Enter sender email address: ') if sender is None else sender
+        if not self.sender:
+            raise ValueError('Sender address cannot be empty')
+        self.recipient = sender if recipient is None else recipient # Assumes loopback if recipient is not provided
+        if self.server and self.sender and not password:
+            self.password = getpass('Enter email password: ')
+        else:
+            self.password = password
+        self.recipient = recipient
 
 
     def __str__(self):
@@ -69,8 +83,22 @@ class Store(MCStock):
         return f'({self.newInStock} new, {self.totalInStock} total) items in stock at Microcenter {self.storeNum}'
 
 
-    def send_email(self):
-        pass
+    def send_email(self, subject, message):
+        server = SMTP(self.server, self.port)
+        server.ehlo()
+        server.starttls()
+        server.login(self.sender, self.password)
+        body = '\n'.join([f'To: {self.recipient}',
+                            f'From: {self.sender}',
+                            f'Subject: {subject}'
+                            '', message])
+        try:
+            server.sendmail(self.sender, self.recipient, body)
+            sent = True
+        except:
+            sent = False
+        server.quit()
+        return sent
 
 
     def update(self):
@@ -88,20 +116,19 @@ class Store(MCStock):
             seconds = minutes * 60
         else:
             raise TypeError('Minutes must be an integer or float')
-        notifier = Notifier()
         while True:
             q = self.update()
             subject = self.email_subject()
             message = self.email_message(q)
             if self.newInStock:
-                notifier.send_email(subject, message)
+                if self.send_email(subject, message):
+                    print('Recipient notified of stock changes')
             sleep(seconds)
-
 
 
     def update_item(self, item):
         item.update()
-        if item.stock and item.stockChanged or True: # 'or True' is false positive for testing
+        if item.stock and item.stockChanged or self.debug:
             return item
 
 
@@ -157,42 +184,9 @@ class Item(MCStock):
         self.stock = stock
         self.price = price
 
-
-class Notifier(MCStock):
-    def __init__(self, server=None, port=None, sender=None, password=None, recipient=None):
-        self.server = 'smtp.gmail.com' if server is None else server
-        self.port = 587 if port is None else port
-        self.sender = input('Enter sender email address: ') if sender is None else sender
-        if not self.sender:
-            raise ValueError('Sender address cannot be empty')
-        self.recipient = sender if recipient is None else recipient # Assumes loopback if recipient is not provided
-        if self.server and self.sender and not password:
-            self.password = getpass('Enter email password: ')
-        else:
-            self.password = password
-        self.recipient = recipient
-
-
-    def send_email(self, subject, message):
-        server = SMTP(self.server, self.port)
-        server.ehlo()
-        server.starttls()
-        server.login(self.sender, self.password)
-        body = '\n'.join([f'To: {self.recipient}',
-                            f'From: {self.sender}',
-                            f'Subject: {subject}'
-                            '', message])
-        try:
-            server.sendmail(self.sender, self.recipient, body)
-            return True
-        except:
-            return False
-        server.quit()
-
-
 if __name__ == '__main__':
     rx570 = ['http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
              'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card']
     mc = Store(131)
     mc.add(rx570)
-    mc.run(1)
+    mc.run()
