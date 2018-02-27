@@ -13,6 +13,7 @@ from re import search
 from requests import get
 from time import sleep
 from smtplib import SMTP
+import asyncio
 
 
 class MCStock(object):
@@ -23,8 +24,7 @@ class MCStock(object):
 class Store(MCStock):
     def __init__(self, storeNum, server=None, port=None, sender=None, password=None, recipient=None, debug=False):
         super().__init__(storeNum)
-        self.items = set()
-        self.newInStock, self.totalInStock = 0, 0
+        self.items, self.newInStock, self.totalInStock = set(), 0, 0
         self.debug = False if debug is None else debug # Setting debug to True enables false positives for testing
         self.server = 'smtp.gmail.com' if server is None else server
         self.port = 587 if port is None else port
@@ -33,49 +33,83 @@ class Store(MCStock):
             raise ValueError('Sender address cannot be empty')
         self.recipient = sender if recipient is None else recipient # Assumes loopback if recipient is not provided
         if self.server and self.sender and not password:
-            self.password = getpass('Enter email password: ')
+            self.__password = getpass('Enter email password: ')
         else:
-            self.password = password
+            self.__password = password
         self.recipient = recipient
+        self.loop = asyncio.get_event_loop()
 
 
     def __str__(self):
         return '\n'.join(item.__str__() for item in self.items)
 
 
+    def __enter__(self):
+        return self
+
+
+    def __exit__(self, a, b, c):
+        self.loop.close()
+
+
+    def run(self, minutes=15):
+        run = asyncio.ensure_future(self.check(minutes))
+        self.loop.run_until_complete(run)
+
+
+    async def check(self, minutes):
+        assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
+        seconds = minutes * 60
+        while True:
+            try:
+                self.update()
+                if self.newInStock:
+                    if self.send_email(self.email_subject(), self.email_message()):
+                        print('Recipient notified of stock changes')
+            except KeyboardInterrupt:
+                return
+            await asyncio.sleep(seconds)
+
+
+    def run_loop(self, minutes):
+        assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
+        seconds = minutes * 60
+        while True:
+            try:
+                print('Checking stock...')
+                self.update()
+                print('Stock checked')
+                if self.newInStock:
+                    print('New items available')
+                    if self.send_email(self.email_subject(), self.email_message()):
+                        print('Recipient notified of stock changes')
+            except KeyboardInterrupt:
+                return
+            sleep(seconds)
+
+
     def add(self, *links):
         for link in links:
-            if isinstance(link, (list, tuple, set)):
-                for l in link:
-                    self.add_link(l)
-            elif isinstance(link, str):
-                self.add_link(link)
-            else:
-                raise TypeError('Links must be a string or list of strings')
-
-
-    def add_link(self, link):
-        if isinstance(link, str):
+            assert isinstance(link, str), 'Link must be a string'
             if link not in (item.link for item in self.items):
                 new = Item(self.storeNum, link)
                 new.update()
                 self.items.add(new)
-        else:
-            raise TypeError('Link must be a string')
 
 
-    def remove(self, links):
+    def remove(self, *links):
         for link in links:
-            for item in self.items:
-                if link == item.link:
-                    self.items.remove(item)
+            assert isinstance(link, str), 'Link must be a string'
+        self.items = set(filter(lambda item: item.link not in links, self.items))
 
 
-    def email_message(self, q):
-        new = []
-        while not q.empty():
-            new.append(q.get())
+    def email_message(self):
+        if self.debug:
+            new = self.items
+        else:
+            new = list(filter(lambda item: item.stockChanged, self.items))
         message = '\n'.join(item.__str__() for item in new)
+        print(message)
         return message
 
 
@@ -87,11 +121,8 @@ class Store(MCStock):
         server = SMTP(self.server, self.port)
         server.ehlo()
         server.starttls()
-        server.login(self.sender, self.password)
-        body = '\n'.join([f'To: {self.recipient}',
-                            f'From: {self.sender}',
-                            f'Subject: {subject}'
-                            '', message])
+        server.login(self.sender, self.__password)
+        body = '\n'.join([f'To: {self.recipient}', f'From: {self.sender}', f'Subject: {subject} ', '', message])
         try:
             server.sendmail(self.sender, self.recipient, body)
             sent = True
@@ -102,58 +133,30 @@ class Store(MCStock):
 
 
     def update(self):
-        q = Queue()
-        p = Pool(cpu_count())
-        for item in p.imap(self.update_item, self.items):
-            q.put(item)
-        self.newInStock = q.qsize()
-        self.totalInStock = sum(item.stock for item in self.items)
-        return q
-
-
-    def run(self, minutes=15):
-        if isinstance(minutes, int):
-            seconds = minutes * 60
+        for item in self.items:
+            item.update()
+        if self.debug:
+            self.newInStock, self.totalInStock = (len(self.items) for i in range(2))
         else:
-            raise TypeError('Minutes must be an integer or float')
-        while True:
-            q = self.update()
-            subject = self.email_subject()
-            message = self.email_message(q)
-            if self.newInStock:
-                if self.send_email(subject, message):
-                    print('Recipient notified of stock changes')
-            sleep(seconds)
-
-
-    def update_item(self, item):
-        item.update()
-        if item.stock and item.stockChanged or self.debug:
-            return item
+            self.newInStock = sum(item.stockChanged for item in self.items)
+            self.totalInStock = sum(item.stock for item in self.items)
 
 
 class Item(MCStock):
     def __init__(self, storeNum, link):
         super().__init__(storeNum)
         self.link = link
-        self.sku = None
-        self.price = None
-        self.stock = None
-        self.stockChanged = False
-        self.priceChanged = False
+        self.sku, self.price, self.stock, = (None for i in range(3))
+        self.stockChanged, self.priceChanged = False, False
 
 
     def __str__(self):
-        if self.stock:
-            stock = 'in stock'
-        else:
-            stock = 'out of stock'
-        return f'SKU {self.sku} is {stock} for {self.price} at Microcenter {self.storeNum}\n{self.link}\n'
+        stock = 'in' if self.stock else 'out of'
+        return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.link}\n'
 
 
     def pull(self):
-        page = get(self.link, cookies={'storeSelected': self.storeNum}).text
-        return page
+        return str(get(self.link, cookies={'storeSelected': self.storeNum}).text)
 
 
     def parse_lines(self, page):
@@ -163,30 +166,27 @@ class Item(MCStock):
                 yield reply.group()
 
 
+    def compare(self, new, old):
+        return True if new != old and old is not None else False
+
+
     def update(self):
-        page = str(self.pull())
+        page = self.pull()
         data = tuple(self.parse_lines(page))
         if not data or any(data) is None:
             raise ValueError('Data missing from request or store number invalid')
         self.sku, inStock, price = int(data[0]), data[1], float(data[2])
-        if inStock == 'True':
-            stock = True
-        else:
-            stock = False
-        if stock != self.stock and self.stock is not None:
-            self.stockChanged = True
-        else:
-            self.stockChanged = False
-        if price != self.price and self.price is not None:
-            self.priceChanged = True
-        else:
-            self.priceChanged = False
-        self.stock = stock
-        self.price = price
+        stock = True if inStock == 'True' else False
+        self.stockChanged, self.priceChanged = self.compare(stock, self.stock), self.compare(price, self.price)
+        self.stock, self.price = stock, price
+
 
 if __name__ == '__main__':
-    rx570 = ['http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
-             'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card']
-    mc = Store(131)
-    mc.add(rx570)
-    mc.run()
+    rx570 = [
+        'http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
+        'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card'
+        ]
+
+    with Store(131) as store:
+        store.add(*rx570)
+        store.run(.3)
