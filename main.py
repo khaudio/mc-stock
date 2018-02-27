@@ -52,37 +52,42 @@ class Store(MCStock):
         self.loop.close()
 
 
-    def run(self, minutes=15):
+    def run_async(self, minutes=15):
         run = asyncio.ensure_future(self.check(minutes))
         self.loop.run_until_complete(run)
 
 
-    async def check(self, minutes):
-        assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
-        seconds = minutes * 60
-        while True:
-            try:
-                self.update()
-                if self.newInStock:
-                    if self.send_email(self.email_subject(), self.email_message()):
-                        print('Recipient notified of stock changes')
-            except KeyboardInterrupt:
-                return
-            await asyncio.sleep(seconds)
-
-
-    def run_loop(self, minutes):
+    async def check(self, minutes=15):
         assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
         seconds = minutes * 60
         while True:
             try:
                 print('Checking stock...')
                 self.update()
-                print('Stock checked')
                 if self.newInStock:
                     print('New items available')
                     if self.send_email(self.email_subject(), self.email_message()):
                         print('Recipient notified of stock changes')
+                else:
+                    print('Stock unchanged')
+            except KeyboardInterrupt:
+                return
+            await asyncio.sleep(seconds)
+
+
+    def run(self, minutes=15):
+        assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
+        seconds = minutes * 60
+        while True:
+            try:
+                print('Checking stock...')
+                self.update()
+                if self.newInStock:
+                    print('New items available')
+                    if self.send_email(self.email_subject(), self.email_message()):
+                        print('Recipient notified of stock changes')
+                else:
+                    print('Stock unchanged')
             except KeyboardInterrupt:
                 return
             sleep(seconds)
@@ -189,4 +194,4 @@ if __name__ == '__main__':
 
     with Store(131) as store:
         store.add(*rx570)
-        store.run(.3)
+        store.run()
