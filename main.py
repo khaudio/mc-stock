@@ -52,9 +52,9 @@ class Store(MCStock):
         self.loop.close()
 
 
-    def run_async(self, minutes=15):
+    def run(self, minutes=15):
         run = asyncio.ensure_future(self.check(minutes))
-        self.loop.run_until_complete(run)
+        self.loop.run_forever()
 
 
     async def check(self, minutes=15):
@@ -63,7 +63,7 @@ class Store(MCStock):
         while True:
             try:
                 print('Checking stock...')
-                self.update()
+                await self.update()
                 if self.newInStock:
                     print('New items available')
                     if self.send_email(self.email_subject(), self.email_message()):
@@ -75,30 +75,12 @@ class Store(MCStock):
             await asyncio.sleep(seconds)
 
 
-    def run(self, minutes=15):
-        assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
-        seconds = minutes * 60
-        while True:
-            try:
-                print('Checking stock...')
-                self.update()
-                if self.newInStock:
-                    print('New items available')
-                    if self.send_email(self.email_subject(), self.email_message()):
-                        print('Recipient notified of stock changes')
-                else:
-                    print('Stock unchanged')
-            except KeyboardInterrupt:
-                return
-            sleep(seconds)
-
-
     def add(self, *links):
         for link in links:
             assert isinstance(link, str), 'Link must be a string'
             if link not in (item.link for item in self.items):
                 new = Item(self.storeNum, link)
-                new.update()
+                self.loop.run_until_complete(new.update())
                 self.items.add(new)
 
 
@@ -137,9 +119,9 @@ class Store(MCStock):
         return sent
 
 
-    def update(self):
+    async def update(self):
         for item in self.items:
-            item.update()
+            await item.update()
         if self.debug:
             self.newInStock, self.totalInStock = (len(self.items) for i in range(2))
         else:
@@ -153,6 +135,7 @@ class Item(MCStock):
         self.link = link
         self.sku, self.price, self.stock, = (None for i in range(3))
         self.stockChanged, self.priceChanged = False, False
+        self.loop = asyncio.get_event_loop()
 
 
     def __str__(self):
@@ -160,8 +143,10 @@ class Item(MCStock):
         return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.link}\n'
 
 
-    def pull(self):
-        return str(get(self.link, cookies={'storeSelected': self.storeNum}).text)
+    async def pull(self):
+        page = self.loop.run_in_executor(None, lambda: get(self.link, cookies={'storeSelected': self.storeNum}))
+        response = await page
+        return response.text
 
 
     def parse_lines(self, page):
@@ -175,13 +160,12 @@ class Item(MCStock):
         return True if new != old and old is not None else False
 
 
-    def update(self):
-        page = self.pull()
+    async def update(self):
+        page = await self.pull()
         data = tuple(self.parse_lines(page))
         if not data or any(data) is None:
             raise ValueError('Data missing from request or store number invalid')
-        self.sku, inStock, price = int(data[0]), data[1], float(data[2])
-        stock = True if inStock == 'True' else False
+        self.sku, stock, price = int(data[0]), True if data[1] is 'True' else False, float(data[2])
         self.stockChanged, self.priceChanged = self.compare(stock, self.stock), self.compare(price, self.price)
         self.stock, self.price = stock, price
 
