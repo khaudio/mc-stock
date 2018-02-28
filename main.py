@@ -1,4 +1,4 @@
-#/usr/bin/env python
+#!/usr/bin/env python
 
 """
 mc-stock checks stock on specified items at Microcenter store locations, and
@@ -6,12 +6,10 @@ sends email notifications when changes are detected.  Applicably, it helps
 the user obtain rare items during shortages, like graphics cards.
 """
 
-
+from aiohttp import ClientSession
+from async_timeout import timeout
 from getpass import getpass
-from multiprocessing import cpu_count, Pool, Queue
 from re import search
-from requests import get
-from time import sleep
 from smtplib import SMTP
 import asyncio
 
@@ -61,33 +59,30 @@ class Store(MCStock):
         assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
         seconds = minutes * 60
         while True:
-            try:
-                print('Checking stock...')
-                await self.update()
-                if self.newInStock:
-                    print('New items available')
-                    if self.send_email(self.email_subject(), self.email_message()):
-                        print('Recipient notified of stock changes')
-                else:
-                    print('Stock unchanged')
-            except KeyboardInterrupt:
-                return
+            print('Checking stock...')
+            await self.update()
+            if self.newInStock:
+                print('New items available')
+                if self.send_email(self.email_subject(), self.email_message()):
+                    print('Recipient notified of stock changes')
+            else:
+                print('Stock unchanged')
             await asyncio.sleep(seconds)
 
 
-    def add(self, *links):
-        for link in links:
-            assert isinstance(link, str), 'Link must be a string'
-            if link not in (item.link for item in self.items):
-                new = Item(self.storeNum, link)
+    def add(self, *urls):
+        for url in urls:
+            assert isinstance(url, str), 'URL must be a string'
+            if url not in (item.url for item in self.items):
+                new = Item(self.storeNum, url)
                 self.loop.run_until_complete(new.update())
                 self.items.add(new)
 
 
-    def remove(self, *links):
-        for link in links:
-            assert isinstance(link, str), 'Link must be a string'
-        self.items = set(filter(lambda item: item.link not in links, self.items))
+    def remove(self, *urls):
+        for url in urls:
+            assert isinstance(url, str), 'URL must be a string'
+        self.items = set(filter(lambda item: item.url not in urls, self.items))
 
 
     def email_message(self):
@@ -130,9 +125,9 @@ class Store(MCStock):
 
 
 class Item(MCStock):
-    def __init__(self, storeNum, link):
+    def __init__(self, storeNum, url):
         super().__init__(storeNum)
-        self.link = link
+        self.url = url
         self.sku, self.price, self.stock, = (None for i in range(3))
         self.stockChanged, self.priceChanged = False, False
         self.loop = asyncio.get_event_loop()
@@ -140,32 +135,34 @@ class Item(MCStock):
 
     def __str__(self):
         stock = 'in' if self.stock else 'out of'
-        return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.link}\n'
+        return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.url}\n'
 
 
     async def pull(self):
-        page = self.loop.run_in_executor(None, lambda: get(self.link, cookies={'storeSelected': self.storeNum}))
-        response = await page
-        return response.text
+        async with ClientSession() as session:
+            async with timeout(10):
+                async with session.get(self.url, params={'storeSelected': self.storeNum}) as response:
+                    return await response.text()
 
 
-    def parse_lines(self, page):
+    @staticmethod
+    def parse_lines(page):
         for var in ['SKU', 'inStock', 'productPrice']:
             reply = search(f"(?<='{var}':').*?(?=',)", page)
             if reply:
                 yield reply.group()
 
 
-    def compare(self, new, old):
+    @staticmethod
+    def compare(new, old):
         return True if new != old and old is not None else False
 
 
     async def update(self):
-        page = await self.pull()
-        data = tuple(self.parse_lines(page))
+        data = tuple(self.parse_lines(await self.pull()))
         if not data or any(data) is None:
             raise ValueError('Data missing from request or store number invalid')
-        self.sku, stock, price = int(data[0]), True if data[1] is 'True' else False, float(data[2])
+        self.sku, stock, price = int(data[0]), data[1] is 'True', float(data[2])
         self.stockChanged, self.priceChanged = self.compare(stock, self.stock), self.compare(price, self.price)
         self.stock, self.price = stock, price
 
