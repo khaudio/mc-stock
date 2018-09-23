@@ -11,7 +11,7 @@ setup(
         url='',
         license='LICENSE.txt',
         description='Checks stock on items at a given Microcenter location.',
-        long_description=open('README.MD').read(),
+        long_description=open('README.txt').read(),
         install_requires=[
                 'aiohttp',
                 'asyncio',
