@@ -14,21 +14,22 @@ from smtplib import SMTP
 import asyncio
 
 
-class Clerk:
+class Clerk(Store):
     """
     Further abstraction and automation of Store
 
     Instantiate Clerk with a list of urls as arguments
     and an optional store number as a keyword argument.
 
-    Store will prompt the user for email account information for
-    loopback messages.
+    Clerk exists to be able to start and run a Store in one line.
+
+    The user will be prompted for email account information.
     """
 
     def __init__(self, *urls, storeNum=131):
-        with Store(storeNum=storeNum, recipient=None) as store:
-            store.add(urls)
-            store.run()
+        super().__init__(storeNum=storeNum)
+        super().add(urls)
+        super().run()
 
 
 class Store:
@@ -238,10 +239,6 @@ class Item:
 
 
 if __name__ == '__main__':
-    urls = [
-            'http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
-            'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card'
-        ]
-    with Store(131) as store:
-        store.add(*urls)
-        store.run()
+    Clerk(
+            'http://www.microcenter.com/product/467995/geforce-gtx-1070-overclocked-dual-fan-8gb-gddr5-pcie--video-card',
+        )
