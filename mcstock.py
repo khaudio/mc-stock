@@ -1,9 +1,9 @@
 #!/usr/bin/env python
 
 """
-mc-stock checks stock on specified items at Microcenter store locations, and
-sends email notifications when changes are detected.  Applicably, it helps
-the user obtain rare items during shortages.
+Checks stock on specified items at Microcenter store locations,
+and sends email notifications when changes are detected.
+Applicably, it helps the user obtain rare items during shortages.
 """
 
 from aiohttp import ClientSession
