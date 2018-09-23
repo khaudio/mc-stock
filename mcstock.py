@@ -94,7 +94,7 @@ class Store:
         else:
             self.sender = sender
         if recipient is None:
-            prompted = input('Enter recipient email address (Leave blank for loopback): ').lstrip().rstrip()
+            prompted = input('Enter recipient email address (leave blank for loopback): ').lstrip().rstrip()
             if not prompted:
                 self.recipient = self.sender
             else:
@@ -171,6 +171,19 @@ class Store:
                 print('Stock unchanged')
             await asyncio.sleep(seconds)
 
+    def add_interactive(self):
+        entry = True
+        while entry:
+            entry = input('Add one or more URLs separated by spaces, or leave blank to complete: ')
+            try:
+                urls = entry.split()
+            except:
+                if entry and 'http' in entry:
+                    self.add(entry.lstrip().rstrip())
+            else:
+                self.add(*urls)
+
+
     def add(self, *urls):
         for url in urls:
             assert isinstance(url, str), 'URL must be a string'
@@ -241,5 +254,11 @@ class Clerk(Store):
 
     def __init__(self, *urls, storeNum=131):
         super().__init__(storeNum=storeNum)
-        super().add(*urls)
+        if urls:
+            super().add(*urls)
+        else:
+            super().add_interactive()
         super().run()
+
+if __name__ == '__main__':
+    Clerk()
