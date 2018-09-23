@@ -3,7 +3,7 @@
 """
 mc-stock checks stock on specified items at Microcenter store locations, and
 sends email notifications when changes are detected.  Applicably, it helps
-the user obtain rare items during shortages, like graphics cards.
+the user obtain rare items during shortages.
 """
 
 from aiohttp import ClientSession
@@ -14,46 +14,121 @@ from smtplib import SMTP
 import asyncio
 
 
-class MCStock(object):
-    def __init__(self, storeNum):
-        self.storeNum = '131' if not storeNum else str(storeNum)
+class Clerk:
+    """
+    Further abstraction and automation of Store
+
+    Instantiate Clerk with a list of urls as arguments
+    and an optional store number as a keyword argument.
+
+    Store will prompt the user for email account information for
+    loopback messages.
+    """
+
+    def __init__(self, *urls, storeNum=131):
+        with Store(storeNum=storeNum, recipient=None) as store:
+            store.add(urls)
+            store.run()
 
 
-class Store(MCStock):
-    def __init__(self, storeNum, server=None, port=None, sender=None, password=None, recipient=None, debug=False):
-        super().__init__(storeNum)
+class Store:
+    """
+    Periodically checks a given list of urls for stock changes
+
+    A store number is required to get accurate stock numbers.
+    The default store number is set to the North Dallas/Richardson, TX location.
+
+    Also required is valid email account information for notifications.
+    If a recipient address is not provided, the user will be prompted for one.
+    If the prompt is empty, notifications are sent from the sender
+    address to itself.  Providing an empty string for recipient is a valid
+    argument to enable loopback operation, as only a value of None
+    will trigger a prompt.
+
+    The default time between checks is 15 minutes.  This value should
+    be at least a few minutes, to avoid being blacklisted by the
+    server, though this class enforces no such limit.  To change the
+    time period, provide a value in minutes to self.run(minutes).
+
+    Setting debug to True enables false positives for testing
+    """
+
+    def __init__(
+            self, storeNum=131, server=None, port=587, sender=None,
+            password=None, recipient=None, debug=False
+        ):
+        self.storeNum = storeNum
         self.items, self.newInStock, self.totalInStock = set(), 0, 0
-        self.debug = False if debug is None else debug # Setting debug to True enables false positives for testing
+        self.debug = debug
         self.server = 'smtp.gmail.com' if server is None else server
-        self.port = 587 if port is None else port
-        self.sender = input('Enter sender email address: ') if sender is None else sender
-        if not self.sender:
-            raise ValueError('Sender address cannot be empty')
-        self.recipient = sender if recipient is None else recipient # Assumes loopback if recipient is not provided
+        self.port = port
+        if not sender:
+            self.sender = input('Enter sender email address: ').lstrip().rstrip()
+        else:
+            self.sender = sender
+        if recipient is None:
+            prompted = input('Enter recipient email address (Leave blank for loopback): ').lstrip().rstrip()
+            if not prompted:
+                self.recipient = self.sender
+            else:
+                self.recipient = prompted
+        else:
+            self.recipient = self.sender
         if self.server and self.sender and not password:
-            self.__password = getpass('Enter email password: ')
+            self.__password = getpass('Enter email account password: ')
         else:
             self.__password = password
-        self.recipient = recipient
         self.loop = asyncio.get_event_loop()
-
 
     def __str__(self):
         return '\n'.join(item.__str__() for item in self.items)
 
-
     def __enter__(self):
         return self
 
-
-    def __exit__(self, a, b, c):
+    def __exit__(self, exc_type, exc_val, exc_tb):
         self.loop.close()
 
+    @property
+    def storeNum(self):
+        return self._storeNum
+
+    @storeNum.setter
+    def storeNum(self, val):
+        """
+        Check to see if value is formatted properly
+        storeNum must be sent as a string, but should contain an integer.
+        """
+        assert isinstance(val, (int, str)), 'Store number must be an integer or string of integer'
+        try:
+            num = int(val)
+        except:
+            raise
+        else:
+            self._storeNum = str(num)
+
+    @property
+    def port(self):
+        return self._port
+
+    @port.setter
+    def port(self, val):
+        assert isinstance(val, int), 'Must be int'
+        self._port = val
+
+    @property
+    def sender(self):
+        return self._sender
+
+    @sender.setter
+    def sender(self, val):
+        assert val is not None, 'Sender address cannot be empty'
+        assert isinstance(val, str), 'Must be str'
+        self._sender = val
 
     def run(self, minutes=15):
         run = asyncio.ensure_future(self.check(minutes))
         self.loop.run_forever()
-
 
     async def check(self, minutes=15):
         assert isinstance(minutes, (int, float)), 'Minutes must be an integer or float'
@@ -63,12 +138,11 @@ class Store(MCStock):
             await self.update()
             if self.newInStock:
                 print('New items available')
-                if self.send_email(self.email_subject(), self.email_message()):
+                if self.send_email():
                     print('Recipient notified of stock changes')
             else:
                 print('Stock unchanged')
             await asyncio.sleep(seconds)
-
 
     def add(self, *urls):
         for url in urls:
@@ -78,72 +152,70 @@ class Store(MCStock):
                 self.loop.run_until_complete(new.update())
                 self.items.add(new)
 
-
     def remove(self, *urls):
         for url in urls:
             assert isinstance(url, str), 'URL must be a string'
         self.items = set(filter(lambda item: item.url not in urls, self.items))
 
-
     def email_message(self):
         if self.debug:
             new = self.items
         else:
-            new = list(filter(lambda item: item.stockChanged, self.items))
+            new = tuple(filter(lambda item: item.stockChanged, self.items))
         message = '\n'.join(item.__str__() for item in new)
         print(message)
         return message
 
-
     def email_subject(self):
         return f'({self.newInStock} new, {self.totalInStock} total) items in stock at Microcenter {self.storeNum}'
 
-
-    def send_email(self, subject, message):
+    def send_email(self):
         server = SMTP(self.server, self.port)
         server.ehlo()
         server.starttls()
         server.login(self.sender, self.__password)
-        body = '\n'.join([f'To: {self.recipient}', f'From: {self.sender}', f'Subject: {subject} ', '', message])
+        body = '\n'.join([
+                f'To: {self.recipient}',
+                f'From: {self.sender}',
+                f'Subject: {self.email_subject}\n',
+                self.email_message
+            ])
         try:
             server.sendmail(self.sender, self.recipient, body)
-            sent = True
         except:
             sent = False
-        server.quit()
+        else:
+            sent = True
+        finally:
+            server.quit()
         return sent
-
 
     async def update(self):
         for item in self.items:
             await item.update()
         if self.debug:
-            self.newInStock, self.totalInStock = (len(self.items) for i in range(2))
+            self.newInStock = self.totalInStock = len(self.items)
         else:
             self.newInStock = sum(item.stockChanged for item in self.items)
             self.totalInStock = sum(item.stock for item in self.items)
 
 
-class Item(MCStock):
+class Item:
     def __init__(self, storeNum, url):
-        super().__init__(storeNum)
-        self.url = url
-        self.sku, self.price, self.stock, = (None for i in range(3))
-        self.stockChanged, self.priceChanged = False, False
+        self.storeNum, self.url = storeNum, url
+        self.sku = self.price = self.stock = None
+        self.stockChanged = self.priceChanged = False
         self.loop = asyncio.get_event_loop()
-
 
     def __str__(self):
         stock = 'in' if self.stock else 'out of'
         return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.url}\n'
-
 
     async def pull(self):
         async with ClientSession() as session:
             async with timeout(10):
                 async with session.get(self.url, params={'storeSelected': self.storeNum}) as response:
                     return await response.text()
-
 
     @staticmethod
     def parse_lines(page):
@@ -152,11 +224,9 @@ class Item(MCStock):
             if reply:
                 yield reply.group()
 
-
     @staticmethod
     def compare(new, old):
-        return True if new != old and old is not None else False
-
+        return (new != old and old is not None)
 
     async def update(self):
         data = tuple(self.parse_lines(await self.pull()))
@@ -168,11 +238,10 @@ class Item(MCStock):
 
 
 if __name__ == '__main__':
-    rx570 = [
-        'http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
-        'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card'
+    urls = [
+            'http://www.microcenter.com/product/478850/Radeon_RX-570_ROG_Overclocked_4GB_GDDR5_Video_Card',
+            'http://www.microcenter.com/product/478907/Radeon_RX_570_Overclocked_4GB_GDDR5_Video_Card'
         ]
-
     with Store(131) as store:
-        store.add(*rx570)
+        store.add(*urls)
         store.run()
