@@ -14,22 +14,48 @@ from smtplib import SMTP
 import asyncio
 
 
-class Clerk(Store):
+class Item:
     """
-    Further abstraction and automation of Store
+    Class for containing state of individual items; methods update state
+    by awaiting update().
 
-    Instantiate Clerk with a list of urls as arguments
-    and an optional store number as a keyword argument.
-
-    Clerk exists to be able to start and run a Store in one line.
-
-    The user will be prompted for email account information.
+    Item does not need to be directly instantiated; Store will create one
+    per provided url.
     """
+    def __init__(self, storeNum, url):
+        self.storeNum, self.url = storeNum, url
+        self.sku = self.price = self.stock = None
+        self.stockChanged = self.priceChanged = False
+        self.loop = asyncio.get_event_loop()
 
-    def __init__(self, *urls, storeNum=131):
-        super().__init__(storeNum=storeNum)
-        super().add(urls)
-        super().run()
+    def __str__(self):
+        stock = 'in' if self.stock else 'out of'
+        return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.url}\n'
+
+    async def pull(self):
+        async with ClientSession() as session:
+            async with timeout(10):
+                async with session.get(self.url, params={'storeSelected': self.storeNum}) as response:
+                    return await response.text()
+
+    @staticmethod
+    def parse_lines(page):
+        for var in ['SKU', 'inStock', 'productPrice']:
+            reply = search(f"(?<='{var}':').*?(?=',)", page)
+            if reply:
+                yield reply.group()
+
+    @staticmethod
+    def compare(new, old):
+        return (new != old and old is not None)
+
+    async def update(self):
+        data = tuple(self.parse_lines(await self.pull()))
+        if not data or any(data) is None:
+            raise ValueError('Data missing from request or store number invalid')
+        self.sku, stock, price = int(data[0]), data[1] is 'True', float(data[2])
+        self.stockChanged, self.priceChanged = self.compare(stock, self.stock), self.compare(price, self.price)
+        self.stock, self.price = stock, price
 
 
 class Store:
@@ -178,8 +204,8 @@ class Store:
         body = '\n'.join([
                 f'To: {self.recipient}',
                 f'From: {self.sender}',
-                f'Subject: {self.email_subject}\n',
-                self.email_message
+                f'Subject: {self.email_subject()}\n',
+                self.email_message()
             ])
         try:
             server.sendmail(self.sender, self.recipient, body)
@@ -201,44 +227,19 @@ class Store:
             self.totalInStock = sum(item.stock for item in self.items)
 
 
-class Item:
-    def __init__(self, storeNum, url):
-        self.storeNum, self.url = storeNum, url
-        self.sku = self.price = self.stock = None
-        self.stockChanged = self.priceChanged = False
-        self.loop = asyncio.get_event_loop()
+class Clerk(Store):
+    """
+    Further abstraction and automation of Store
 
-    def __str__(self):
-        stock = 'in' if self.stock else 'out of'
-        return f'SKU {self.sku} is {stock} stock for {self.price} at Microcenter {self.storeNum}\n{self.url}\n'
+    Instantiate Clerk with a list of urls as arguments
+    and an optional store number as a keyword argument.
 
-    async def pull(self):
-        async with ClientSession() as session:
-            async with timeout(10):
-                async with session.get(self.url, params={'storeSelected': self.storeNum}) as response:
-                    return await response.text()
+    Clerk exists to be able to start and run a Store in one line.
 
-    @staticmethod
-    def parse_lines(page):
-        for var in ['SKU', 'inStock', 'productPrice']:
-            reply = search(f"(?<='{var}':').*?(?=',)", page)
-            if reply:
-                yield reply.group()
+    The user will be prompted for email account information.
+    """
 
-    @staticmethod
-    def compare(new, old):
-        return (new != old and old is not None)
-
-    async def update(self):
-        data = tuple(self.parse_lines(await self.pull()))
-        if not data or any(data) is None:
-            raise ValueError('Data missing from request or store number invalid')
-        self.sku, stock, price = int(data[0]), data[1] is 'True', float(data[2])
-        self.stockChanged, self.priceChanged = self.compare(stock, self.stock), self.compare(price, self.price)
-        self.stock, self.price = stock, price
-
-
-if __name__ == '__main__':
-    Clerk(
-            'http://www.microcenter.com/product/467995/geforce-gtx-1070-overclocked-dual-fan-8gb-gddr5-pcie--video-card',
-        )
+    def __init__(self, *urls, storeNum=131):
+        super().__init__(storeNum=storeNum)
+        super().add(*urls)
+        super().run()

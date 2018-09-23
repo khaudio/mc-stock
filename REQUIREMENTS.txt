@@ -1,8 +1,10 @@
+aiohttp==3.4.4
 altgraph==0.15
 amqp==2.2.2
 appdirs==1.4.3
 asciimatics==1.9.0
 asn1crypto==0.24.0
+async-timeout==3.0.0
 attrs==17.4.0
 autobahn==18.3.1
 Automat==0.6.0
@@ -21,7 +23,7 @@ click==6.7
 colorama==0.3.9
 constantly==15.1.0
 coverage==4.5.1
-cryptography==2.2.1
+cryptography==2.3.1
 cupshelpers==1.0
 cycler==0.10.0
 Cython==0.28.5
@@ -69,6 +71,7 @@ MediaInfo==0.0.8
 meld==3.19.0
 mistune==0.8.3
 msgpack==0.5.6
+multidict==4.4.2
 nbconvert==5.3.1
 nbformat==4.4.0
 nose==1.3.7
@@ -147,4 +150,5 @@ virtualenv==16.0.0
 wcwidth==0.1.7
 webencodings==0.5.1
 widgetsnbextension==3.4.1
+yarl==1.2.6
 zope.interface==4.4.3
