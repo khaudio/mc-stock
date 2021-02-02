@@ -12,7 +12,7 @@ backcall==0.1.0
 Beaker==1.9.0
 billiard==3.5.0.3
 binance==0.3
-bleach==2.1.4
+bleach==3.3.0
 Brlapi==0.6.7
 CacheControl==0.12.5
 celery==4.1.0
