@@ -104,7 +104,7 @@ pycurl==7.43.0.1
 pydbus==0.6.0
 pyenchant==2.0.0
 pyfiglet==0.7.5
-Pygments==2.2.0
+Pygments==2.7.4
 pygobject==3.28.2
 PyInstaller==3.3.1
 pyOpenSSL==17.5.0
