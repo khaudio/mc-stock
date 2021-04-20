@@ -6,7 +6,7 @@ asciimatics==1.9.0
 asn1crypto==0.24.0
 async-timeout==3.0.0
 attrs==17.4.0
-autobahn==18.3.1
+autobahn==20.12.3
 Automat==0.6.0
 backcall==0.1.0
 Beaker==1.9.0
