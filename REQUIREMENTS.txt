@@ -15,7 +15,7 @@ binance==0.3
 bleach==2.1.4
 Brlapi==0.6.7
 CacheControl==0.12.5
-celery==4.1.0
+celery==5.2.2
 certifi==2018.1.18
 cffi==1.11.5
 chardet==3.0.4
