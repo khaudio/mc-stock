@@ -64,7 +64,7 @@ kombu==4.1.0
 lockfile==0.12.2
 louis==3.4.0
 macholib==1.9
-Mako==1.0.7
+Mako==1.2.2
 MarkupSafe==1.0
 matplotlib==2.2.3
 MediaInfo==0.0.8
